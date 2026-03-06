@@ -74,7 +74,7 @@ app.post('/generate', async (req, res) => {
 
     await b.close();
 
-    const base64 = pdfBuffer.toString('base64');
+    const base64 = Buffer.from(pdfBuffer).toString('base64');
     res.json({ success: true, pdf: base64, filename: filename || 'document.pdf' });
 
   } catch (err) {
