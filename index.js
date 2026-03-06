@@ -98,7 +98,7 @@ app.post('/generate', async (req, res) => {
             <strong style="color:#f97316;">EDO INGENIERÍA DIGITAL</strong>
           </div>
         </div>`,
-      margin: { top: '0.5in', right: '0.55in', bottom: '1.7in', left: '0.55in' }
+      margin: { top: '0.5in', right: '0.55in', bottom: '2.0in', left: '0.55in' } // v2
     });
 
     await b.close();
