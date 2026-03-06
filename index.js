@@ -52,7 +52,7 @@ app.post('/generate', async (req, res) => {
     const b = await getBrowser();
     page = await b.newPage();
 
-    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     const pdfBuffer = await page.pdf({
       format: 'Letter',
