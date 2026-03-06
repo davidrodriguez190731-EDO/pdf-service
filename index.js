@@ -67,11 +67,22 @@ app.post('/generate', async (req, res) => {
     page = await b.newPage();
     await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    // Extraer nombre empresa del HTML para el footer
-    const empNombre = await page.evaluate(() => {
-      const el = document.getElementById('emp-nombre');
-      return el ? el.textContent : 'TTM BUILDERS LLC';
+    // Extraer datos del HTML para el footer
+    const footerData = await page.evaluate(() => {
+      const empEl = document.getElementById('emp-nombre');
+      const termsEl = document.getElementById('payment-terms-text');
+      return {
+        empNombre: empEl ? empEl.textContent : 'TTM BUILDERS LLC',
+        paymentTerms: termsEl ? termsEl.textContent : ''
+      };
     });
+
+    const footerTerms = footerData.paymentTerms
+      ? `<div style="border-top:1px solid #dddddd;margin-bottom:5px;padding-top:5px;">
+           <span style="font-weight:bold;color:#2d5a1b;">Payment Terms</span><br>
+           <span style="color:#777777;">${footerData.paymentTerms}</span>
+         </div>`
+      : '';
 
     const pdfBuffer = await page.pdf({
       format: 'Letter',
@@ -79,12 +90,15 @@ app.post('/generate', async (req, res) => {
       displayHeaderFooter: true,
       headerTemplate: '<span></span>',
       footerTemplate: `
-        <div style="width:100%;font-family:Arial,sans-serif;font-size:7pt;padding:8px 40px 10px 40px;border-top:1px solid #eeeeee;text-align:center;box-sizing:border-box;">
-          <strong style="color:#2d5a1b;">${empNombre}</strong><br>
-          <span style="color:#aaaaaa;font-style:italic;">Powered by </span>
-          <strong style="color:#f97316;">EDO INGENIERÍA DIGITAL</strong>
+        <div style="width:100%;font-family:Arial,sans-serif;font-size:6.5pt;padding:6px 40px 8px 40px;box-sizing:border-box;line-height:1.4;">
+          ${footerTerms}
+          <div style="border-top:1px solid #eeeeee;padding-top:5px;text-align:center;">
+            <strong style="color:#2d5a1b;">${footerData.empNombre}</strong>
+            <span style="color:#aaaaaa;font-style:italic;"> &nbsp;Powered by </span>
+            <strong style="color:#f97316;">EDO INGENIERÍA DIGITAL</strong>
+          </div>
         </div>`,
-      margin: { top: '0.5in', right: '0.55in', bottom: '0.9in', left: '0.55in' }
+      margin: { top: '0.5in', right: '0.55in', bottom: '1.4in', left: '0.55in' }
     });
 
     await b.close();
