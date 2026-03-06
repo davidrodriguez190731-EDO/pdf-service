@@ -4,16 +4,14 @@ const puppeteer = require('puppeteer');
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 
-// ── Clave de seguridad — se define como variable de entorno en Railway ──
 const API_KEY = process.env.API_KEY || 'cambiar-esta-clave';
 
-// ── Pool simple: una instancia de browser reutilizada ──
 let browser = null;
 
 async function getBrowser() {
   if (!browser || !browser.isConnected()) {
     browser = await puppeteer.launch({
-      headless: 'new',
+      headless: true,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -21,22 +19,26 @@ async function getBrowser() {
         '--disable-gpu',
         '--no-first-run',
         '--no-zygote',
-        '--single-process'
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-default-apps',
+        '--disable-sync',
+        '--disable-translate',
+        '--hide-scrollbars',
+        '--metrics-recording-only',
+        '--mute-audio',
+        '--safebrowsing-disable-auto-update'
       ]
     });
   }
   return browser;
 }
 
-// ── Health check ──
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'pdf-service' });
 });
 
-// ── Endpoint principal: POST /generate ──
 app.post('/generate', async (req, res) => {
-
-  // Validar API key
   const key = req.headers['x-api-key'];
   if (key !== API_KEY) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -49,20 +51,29 @@ app.post('/generate', async (req, res) => {
 
   let page = null;
   try {
-    const b = await getBrowser();
-    page = await b.newPage();
+    // Crear browser nuevo por cada request para evitar crashes
+    const b = await puppeteer.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-zygote',
+        '--single-process'
+      ]
+    });
 
+    page = await b.newPage();
     await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     const pdfBuffer = await page.pdf({
       format: 'Letter',
-      margin: { top: '0.5in', right: '0.55in', bottom: '0.5in', left: '0.55in' },
-      printBackground: true   // ← CLAVE: renderiza colores de fondo
+      printBackground: true
     });
 
-    await page.close();
+    await b.close();
 
-    // Devolver PDF como base64
     const base64 = pdfBuffer.toString('base64');
     res.json({ success: true, pdf: base64, filename: filename || 'document.pdf' });
 
