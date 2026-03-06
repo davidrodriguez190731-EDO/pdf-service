@@ -67,9 +67,24 @@ app.post('/generate', async (req, res) => {
     page = await b.newPage();
     await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
+    // Extraer nombre empresa del HTML para el footer
+    const empNombre = await page.evaluate(() => {
+      const el = document.getElementById('emp-nombre');
+      return el ? el.textContent : 'TTM BUILDERS LLC';
+    });
+
     const pdfBuffer = await page.pdf({
       format: 'Letter',
-      printBackground: true
+      printBackground: true,
+      displayHeaderFooter: true,
+      headerTemplate: '<span></span>',
+      footerTemplate: `
+        <div style="width:100%;font-family:Arial,sans-serif;font-size:7pt;padding:8px 40px 10px 40px;border-top:1px solid #eeeeee;text-align:center;box-sizing:border-box;">
+          <strong style="color:#2d5a1b;">${empNombre}</strong><br>
+          <span style="color:#aaaaaa;font-style:italic;">Powered by </span>
+          <strong style="color:#f97316;">EDO INGENIERÍA DIGITAL</strong>
+        </div>`,
+      margin: { top: '0.5in', right: '0.55in', bottom: '0.9in', left: '0.55in' }
     });
 
     await b.close();
