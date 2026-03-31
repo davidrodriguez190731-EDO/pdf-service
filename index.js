@@ -4,14 +4,16 @@ const puppeteer = require('puppeteer');
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 
+// ── Clave de seguridad ──
 const API_KEY = process.env.API_KEY || 'cambiar-esta-clave';
 
+// ── Pool simple: una instancia de browser reutilizada ──
 let browser = null;
 
 async function getBrowser() {
   if (!browser || !browser.isConnected()) {
     browser = await puppeteer.launch({
-      headless: true,
+      headless: 'new',
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -19,26 +21,21 @@ async function getBrowser() {
         '--disable-gpu',
         '--no-first-run',
         '--no-zygote',
-        '--disable-extensions',
-        '--disable-background-networking',
-        '--disable-default-apps',
-        '--disable-sync',
-        '--disable-translate',
-        '--hide-scrollbars',
-        '--metrics-recording-only',
-        '--mute-audio',
-        '--safebrowsing-disable-auto-update'
+        '--single-process'
       ]
     });
   }
   return browser;
 }
 
+// ── Health check ──
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'pdf-service' });
 });
 
+// ── Generar PDF ──
 app.post('/generate', async (req, res) => {
+  // Verificar API key
   const key = req.headers['x-api-key'];
   if (key !== API_KEY) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -46,74 +43,56 @@ app.post('/generate', async (req, res) => {
 
   const { html, filename } = req.body;
   if (!html) {
-    return res.status(400).json({ error: 'Missing html field' });
+    return res.status(400).json({ error: 'Missing html' });
   }
 
   let page = null;
   try {
-    // Crear browser nuevo por cada request para evitar crashes
-    const b = await puppeteer.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-zygote',
-        '--single-process'
-      ]
-    });
-
+    const b = await getBrowser();
     page = await b.newPage();
-    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
 
-    // Extraer datos del HTML para el footer
-    const footerData = await page.evaluate(() => {
-      const empEl = document.getElementById('emp-nombre');
-      const termsEl = document.getElementById('payment-terms-text');
-      return {
-        empNombre: empEl ? empEl.textContent : 'TTM BUILDERS LLC',
-        paymentTerms: termsEl ? termsEl.textContent : ''
-      };
-    });
-
-    const footerTerms = footerData.paymentTerms
-      ? `<div style="border-top:1px solid #dddddd;margin-bottom:5px;padding-top:5px;">
-           <span style="font-weight:bold;color:#2d5a1b;">Payment Terms</span><br>
-           <span style="color:#777777;">${footerData.paymentTerms}</span>
-         </div>`
-      : '';
-
-    const pdfBuffer = await page.pdf({
+    // Opciones de PDF
+    const pdfOptions = {
       format: 'Letter',
       printBackground: true,
-      displayHeaderFooter: true,
-      headerTemplate: '<span></span>',
-      footerTemplate: `
-        <div style="width:100%;font-family:Arial,sans-serif;font-size:6.5pt;padding:6px 40px 8px 40px;box-sizing:border-box;line-height:1.4;">
-          ${footerTerms}
-          <div style="border-top:1px solid #eeeeee;padding-top:5px;text-align:center;">
-            <strong style="color:#2d5a1b;">${footerData.empNombre}</strong>
-            <span style="color:#aaaaaa;font-style:italic;"> &nbsp;Powered by </span>
-            <strong style="color:#f97316;">EDO INGENIERÍA DIGITAL</strong>
-          </div>
-        </div>`,
-      margin: { top: '0.5in', right: '0.55in', bottom: '2.0in', left: '0.55in' } // v2
+      preferCSSPageSize: false
+    };
+
+    // Footer y Header personalizados
+    if (req.body.displayHeaderFooter) {
+      pdfOptions.displayHeaderFooter = true;
+      pdfOptions.headerTemplate = req.body.headerTemplate || '<span></span>';
+      pdfOptions.footerTemplate = req.body.footerTemplate || '<span></span>';
+    }
+
+    // Márgenes personalizados
+    if (req.body.margin) {
+      pdfOptions.margin = req.body.margin;
+    } else if (req.body.displayHeaderFooter) {
+      // Márgenes por defecto cuando hay header/footer
+      pdfOptions.margin = { top: '20px', bottom: '60px', left: '0px', right: '0px' };
+    }
+
+    const pdfBuffer = await page.pdf(pdfOptions);
+
+    res.json({
+      success: true,
+      pdf: pdfBuffer.toString('base64'),
+      filename: filename || 'document.pdf'
     });
 
-    await b.close();
-
-    const base64 = Buffer.from(pdfBuffer).toString('base64');
-    res.json({ success: true, pdf: base64, filename: filename || 'document.pdf' });
-
   } catch (err) {
-    if (page) await page.close().catch(() => {});
-    console.error('Error generando PDF:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('Error generating PDF:', err);
+    res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (page) {
+      try { await page.close(); } catch (e) {}
+    }
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`PDF Service corriendo en puerto ${PORT}`);
+  console.log(`PDF Service running on port ${PORT}`);
 });
