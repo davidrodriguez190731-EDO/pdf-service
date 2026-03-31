@@ -78,7 +78,7 @@ app.post('/generate', async (req, res) => {
 
     res.json({
       success: true,
-      pdf: pdfBuffer.toString('base64'),
+      pdf: Buffer.from(pdfBuffer).toString('base64'),
       filename: filename || 'document.pdf'
     });
 
