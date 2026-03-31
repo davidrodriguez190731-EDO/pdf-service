@@ -4,14 +4,15 @@ const puppeteer = require('puppeteer');
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 
-// ── Clave de seguridad ──
 const API_KEY = process.env.API_KEY || 'cambiar-esta-clave';
 
-// ── Pool simple: una instancia de browser reutilizada ──
 let browser = null;
 
 async function getBrowser() {
   if (!browser || !browser.isConnected()) {
+    if (browser) {
+      try { await browser.close(); } catch (e) {}
+    }
     browser = await puppeteer.launch({
       headless: 'new',
       args: [
@@ -28,14 +29,43 @@ async function getBrowser() {
   return browser;
 }
 
-// ── Health check ──
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'pdf-service' });
 });
 
-// ── Generar PDF ──
+// Función interna que genera el PDF
+async function generatePDF(html, options) {
+  const b = await getBrowser();
+  const page = await b.newPage();
+  try {
+    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+
+    const pdfOptions = {
+      format: 'Letter',
+      printBackground: true,
+      preferCSSPageSize: false
+    };
+
+    if (options.displayHeaderFooter) {
+      pdfOptions.displayHeaderFooter = true;
+      pdfOptions.headerTemplate = options.headerTemplate || '<span></span>';
+      pdfOptions.footerTemplate = options.footerTemplate || '<span></span>';
+    }
+
+    if (options.margin) {
+      pdfOptions.margin = options.margin;
+    } else if (options.displayHeaderFooter) {
+      pdfOptions.margin = { top: '20px', bottom: '60px', left: '0px', right: '0px' };
+    }
+
+    const pdfBuffer = await page.pdf(pdfOptions);
+    return Buffer.from(pdfBuffer).toString('base64');
+  } finally {
+    try { await page.close(); } catch (e) {}
+  }
+}
+
 app.post('/generate', async (req, res) => {
-  // Verificar API key
   const key = req.headers['x-api-key'];
   if (key !== API_KEY) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -46,48 +76,25 @@ app.post('/generate', async (req, res) => {
     return res.status(400).json({ error: 'Missing html' });
   }
 
-  let page = null;
-  try {
-    const b = await getBrowser();
-    page = await b.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
-
-    // Opciones de PDF
-    const pdfOptions = {
-      format: 'Letter',
-      printBackground: true,
-      preferCSSPageSize: false
-    };
-
-    // Footer y Header personalizados
-    if (req.body.displayHeaderFooter) {
-      pdfOptions.displayHeaderFooter = true;
-      pdfOptions.headerTemplate = req.body.headerTemplate || '<span></span>';
-      pdfOptions.footerTemplate = req.body.footerTemplate || '<span></span>';
-    }
-
-    // Márgenes personalizados
-    if (req.body.margin) {
-      pdfOptions.margin = req.body.margin;
-    } else if (req.body.displayHeaderFooter) {
-      // Márgenes por defecto cuando hay header/footer
-      pdfOptions.margin = { top: '20px', bottom: '60px', left: '0px', right: '0px' };
-    }
-
-    const pdfBuffer = await page.pdf(pdfOptions);
-
-    res.json({
-      success: true,
-      pdf: Buffer.from(pdfBuffer).toString('base64'),
-      filename: filename || 'document.pdf'
-    });
-
-  } catch (err) {
-    console.error('Error generating PDF:', err);
-    res.status(500).json({ success: false, error: err.message });
-  } finally {
-    if (page) {
-      try { await page.close(); } catch (e) {}
+  const maxRetries = 3;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const pdf = await generatePDF(html, req.body);
+      return res.json({
+        success: true,
+        pdf: pdf,
+        filename: filename || 'document.pdf'
+      });
+    } catch (err) {
+      console.error(`Attempt ${attempt}/${maxRetries} failed:`, err.message);
+      // Si el browser se desconectó, forzar reconexión
+      if (err.message.includes('detached') || err.message.includes('disconnected') || err.message.includes('closed')) {
+        try { await browser.close(); } catch (e) {}
+        browser = null;
+      }
+      if (attempt === maxRetries) {
+        return res.status(500).json({ success: false, error: err.message });
+      }
     }
   }
 });
